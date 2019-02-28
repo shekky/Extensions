@@ -5,8 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Testing;
 using Microsoft.AspNetCore.Testing.xunit;
 using Microsoft.Extensions.Configuration.Ini;
 using Microsoft.Extensions.Configuration.Json;
@@ -20,6 +20,9 @@ namespace Microsoft.Extensions.Configuration.Test
 {
     public class ConfigurationTests : IDisposable
     {
+        private const int _retries = 100;
+        private const int _msDelay = 200;
+
         private readonly DisposableFileSystem _fileSystem;
         private readonly PhysicalFileProvider _fileProvider;
         private readonly string _basePath;
@@ -88,106 +91,74 @@ CommonKey3:CommonKey4=IniValue6";
         }
 
         [Fact]
+        public void ThrowsOnFileNotFoundWhenNotIgnored()
+        {
+            var configurationBuilder = new ConfigurationBuilder();
+            configurationBuilder.AddJsonFile(c =>
+            {
+                c.Path = Path.Combine(_fileSystem.RootPath, _jsonFile);
+            });
+
+            Assert.Throws<FileNotFoundException>(() => configurationBuilder.Build());
+        }
+        
+        [Fact]
+        public void CanHandleExceptionIfFileNotFound()
+        {
+            var configurationBuilder = new ConfigurationBuilder();
+            configurationBuilder.AddJsonFile(c =>
+            {
+                c.Path = Path.Combine(_fileSystem.RootPath, _jsonFile);
+                c.OnLoadException = e =>
+                {
+                    e.Ignore = true;
+                    var exception = e.Exception as FileNotFoundException;
+                    Assert.NotNull(exception);
+                };
+            });
+
+            configurationBuilder.Build();
+        }
+
+        [Fact]
         public void MissingFileIncludesAbsolutePathIfPhysicalFileProvider()
         {
-            var error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddIniFile("missing.ini").Build());
+            var error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddIniFile("missing.ini").Build());
             Assert.True(error.Message.Contains(_basePath), error.Message);
-            error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddJsonFile("missing.json").Build());
+
+            error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddJsonFile("missing.json").Build());
             Assert.True(error.Message.Contains(_basePath), error.Message);
-            error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddXmlFile("missing.xml").Build());
+
+            error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddXmlFile("missing.xml").Build());
             Assert.True(error.Message.Contains(_basePath), error.Message);
         }
 
         private class NotVeryGoodFileProvider : IFileProvider
         {
-            public IDirectoryContents GetDirectoryContents(string subpath)
-            {
-                return null;
-            }
-
-            public IFileInfo GetFileInfo(string subpath)
-            {
-                return null;
-            }
-
-            public IChangeToken Watch(string filter)
-            {
-                return null;
-            }
+            public IDirectoryContents GetDirectoryContents(string subpath) => null;
+            public IFileInfo GetFileInfo(string subpath) => null;
+            public IChangeToken Watch(string filter) => null;
         }
 
         private class MissingFile : IFileInfo
         {
-            public bool Exists
-            {
-                get
-                {
-                    return false;
-                }
-            }
-
-            public bool IsDirectory
-            {
-                get
-                {
-                    throw new NotImplementedException();
-                }
-            }
-
-            public DateTimeOffset LastModified
-            {
-                get
-                {
-                    throw new NotImplementedException();
-                }
-            }
-
-            public long Length
-            {
-                get
-                {
-                    throw new NotImplementedException();
-                }
-            }
-
-            public string Name
-            {
-                get
-                {
-                    throw new NotImplementedException();
-                }
-            }
-
-            public string PhysicalPath
-            {
-                get
-                {
-                    return null;
-                }
-            }
-
-            public Stream CreateReadStream()
-            {
-                throw new NotImplementedException();
-            }
+            public bool Exists => false;
+            public bool IsDirectory => throw new NotImplementedException();
+            public DateTimeOffset LastModified => throw new NotImplementedException();
+            public long Length => throw new NotImplementedException();
+            public string Name => throw new NotImplementedException();
+            public string PhysicalPath => throw new NotImplementedException();
+            public Stream CreateReadStream() => throw new NotImplementedException();
         }
 
         private class AlwaysMissingFileProvider : IFileProvider
         {
-            public IDirectoryContents GetDirectoryContents(string subpath)
-            {
-                return null;
-            }
-
-            public IFileInfo GetFileInfo(string subpath)
-            {
-                return new MissingFile();
-            }
-
-            public IChangeToken Watch(string filter)
-            {
-                return null;
-            }
+            public IDirectoryContents GetDirectoryContents(string subpath) => null;
+            public IFileInfo GetFileInfo(string subpath) => null;
+            public IChangeToken Watch(string filter) => null;
         }
 
         private void WriteTestFiles()
@@ -206,11 +177,16 @@ CommonKey3:CommonKey4=IniValue6";
         public void MissingFileDoesNotIncludesAbsolutePathIfWithNullFileInfo()
         {
             var provider = new NotVeryGoodFileProvider();
-            var error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddIniFile(provider, "missing.ini", optional: false, reloadOnChange: false).Build());
+            var error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddIniFile(provider, "missing.ini", optional: false, reloadOnChange: false).Build());
             Assert.False(error.Message.Contains(_basePath), error.Message);
-            error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddJsonFile(provider, "missing.json", optional: false, reloadOnChange: false).Build());
+
+            error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddJsonFile(provider, "missing.json", optional: false, reloadOnChange: false).Build());
             Assert.False(error.Message.Contains(_basePath), error.Message);
-            error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddXmlFile(provider, "missing.xml", optional: false, reloadOnChange: false).Build());
+
+            error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddXmlFile(provider, "missing.xml", optional: false, reloadOnChange: false).Build());
             Assert.False(error.Message.Contains(_basePath), error.Message);
         }
 
@@ -218,21 +194,24 @@ CommonKey3:CommonKey4=IniValue6";
         public void MissingFileDoesNotIncludesAbsolutePathIfWithNoPhysicalPath()
         {
             var provider = new AlwaysMissingFileProvider();
-            var error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddIniFile(provider, "missing.ini", optional: false, reloadOnChange: false).Build());
+            var error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddIniFile(provider, "missing.ini", optional: false, reloadOnChange: false).Build());
             Assert.False(error.Message.Contains(_basePath), error.Message);
-            error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddJsonFile(provider, "missing.json", optional: false, reloadOnChange: false).Build());
+
+            error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddJsonFile(provider, "missing.json", optional: false, reloadOnChange: false).Build());
             Assert.False(error.Message.Contains(_basePath), error.Message);
-            error = Assert.Throws<FileNotFoundException>(() => new ConfigurationBuilder().AddXmlFile(provider, "missing.xml", optional: false, reloadOnChange: false).Build());
+
+            error = Assert.Throws<FileNotFoundException>(
+                () => new ConfigurationBuilder().AddXmlFile(provider, "missing.xml", optional: false, reloadOnChange: false).Build());
             Assert.False(error.Message.Contains(_basePath), error.Message);
         }
 
         [Fact]
         public void LoadAndCombineKeyValuePairsFromDifferentConfigurationProviders()
         {
-            // Arrange
-            _fileSystem.WriteFile(_iniFile, _iniConfigFileContent);
-            _fileSystem.WriteFile(_xmlFile, _xmlConfigFileContent);
-            _fileSystem.WriteFile(_jsonFile, _jsonConfigFileContent);
+            WriteTestFiles();
+
             var config = CreateBuilder()
                 .AddIniFile(_iniFile)
                 .AddJsonFile(_jsonFile)
@@ -240,7 +219,6 @@ CommonKey3:CommonKey4=IniValue6";
                 .AddInMemoryCollection(_memConfigContent)
                 .Build();
 
-            // Assert
             Assert.Equal("IniValue1", config["IniKey1"]);
             Assert.Equal("IniValue2", config["IniKey2:IniKey3"]);
             Assert.Equal("IniValue3", config["IniKey2:IniKey4"]);
@@ -271,11 +249,9 @@ CommonKey3:CommonKey4=IniValue6";
         [Fact]
         public void LoadAndCombineKeyValuePairsFromDifferentConfigurationProvidersWithAbsolutePath()
         {
-            // Arrange
             WriteTestFiles();
-            var configurationBuilder = new ConfigurationBuilder();
 
-            // Act
+            var configurationBuilder = new ConfigurationBuilder();
             configurationBuilder.AddIniFile(Path.Combine(_fileSystem.RootPath, _iniFile));
             configurationBuilder.AddJsonFile(Path.Combine(_fileSystem.RootPath, _jsonFile));
             configurationBuilder.AddXmlFile(Path.Combine(_fileSystem.RootPath, _xmlFile));
@@ -283,7 +259,6 @@ CommonKey3:CommonKey4=IniValue6";
 
             var config = configurationBuilder.Build();
 
-            // Assert
             Assert.Equal("IniValue1", config["IniKey1"]);
             Assert.Equal("IniValue2", config["IniKey2:IniKey3"]);
             Assert.Equal("IniValue3", config["IniKey2:IniKey4"]);
@@ -314,11 +289,10 @@ CommonKey3:CommonKey4=IniValue6";
         [Fact]
         public void CanOverrideValuesWithNewConfigurationProvider()
         {
-            // Arrange
             WriteTestFiles();
+
             var configurationBuilder = CreateBuilder();
 
-            // Act & Assert
             configurationBuilder.AddIniFile(_iniFile);
             var config = configurationBuilder.Build();
             Assert.Equal("IniValue6", config["CommonKey1:CommonKey2:CommonKey3:CommonKey4"]);
@@ -387,8 +361,7 @@ CommonKey3:CommonKey4=IniValue6";
         [Fact]
         public void OnLoadErrorWillBeCalledOnJsonParseError()
         {
-            // Arrange
-            File.WriteAllText(Path.Combine(_basePath, "error.json"), @"{""JsonKey1"": ");
+            _fileSystem.WriteFile(Path.Combine(_basePath, "error.json"), @"{""JsonKey1"": ", absolute: true);
 
             FileConfigurationProvider provider = null;
             Exception jsonError = null;
@@ -400,7 +373,8 @@ CommonKey3:CommonKey4=IniValue6";
 
             try
             {
-                new ConfigurationBuilder().AddJsonFile("error.json")
+                new ConfigurationBuilder()
+                    .AddJsonFile("error.json")
                     .SetFileLoadExceptionHandler(jsonLoadError)
                     .Build();
             }
@@ -408,13 +382,13 @@ CommonKey3:CommonKey4=IniValue6";
             {
                 Assert.Equal(e, jsonError);
             }
+
             Assert.NotNull(provider);
         }
 
         [Fact]
         public void OnLoadErrorWillBeCalledOnXmlParseError()
         {
-            // Arrange
             _fileSystem.WriteFile("error.xml", @"gobblygook");
 
             FileConfigurationProvider provider = null;
@@ -435,13 +409,13 @@ CommonKey3:CommonKey4=IniValue6";
             {
                 Assert.Equal(e, error);
             }
+
             Assert.NotNull(provider);
         }
 
         [Fact]
         public void OnLoadErrorWillBeCalledOnIniLoadError()
         {
-            // Arrange
             _fileSystem.WriteFile("error.ini", @"IniKey1=IniValue1
 IniKey1=IniValue2");
 
@@ -469,7 +443,6 @@ IniKey1=IniValue2");
         [Fact]
         public void OnLoadErrorCanIgnoreErrors()
         {
-            // Arrange
             _fileSystem.WriteFile("error.json", @"{""JsonKey1"": ");
 
             FileConfigurationProvider provider = null;
@@ -490,11 +463,13 @@ IniKey1=IniValue2");
             Assert.NotNull(provider);
         }
 
-        [Fact]
+        [ConditionalFact]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         public void CanSetValuesAndReloadValues()
         {
-            // Arrange
             WriteTestFiles();
+
             var configurationBuilder = CreateBuilder();
             configurationBuilder.Add(new TestIniSourceProvider(_iniFile));
             configurationBuilder.Add(new TestJsonSourceProvider(_jsonFile));
@@ -502,7 +477,6 @@ IniKey1=IniValue2");
 
             var config = configurationBuilder.Build();
 
-            // Act & Assert
             // Set value
             config["CommonKey1:CommonKey2:CommonKey3:CommonKey4"] = "NewValue";
 
@@ -533,44 +507,43 @@ IniKey1=IniValue2");
             Assert.Equal("XmlValue6", config["CommonKey1:CommonKey2:CommonKey3:CommonKey4"]);
         }
 
-        [Fact]
+        [ConditionalFact]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         public async Task ReloadOnChangeWorksAfterError()
         {
             _fileSystem.WriteFile("reload.json", @"{""JsonKey1"": ""JsonValue1""}");
+
             var config = CreateBuilder()
                 .AddJsonFile("reload.json", optional: false, reloadOnChange: true)
                 .Build();
+
             Assert.Equal("JsonValue1", config["JsonKey1"]);
 
             // Introduce an error and make sure the old key is removed
             _fileSystem.WriteFile("reload.json", @"{""JsonKey1"": ");
 
-            var i = 0;
-            while (i < 10 && config["JsonKey1"] != null)
-            {
-                await Task.Delay(2000); // wait for notification
-                i++;
-            }
+            await WaitForChange(
+                () => config["JsonKey1"] == null,
+                "Notification failed for loading after error.");
 
             Assert.Null(config["JsonKey1"]);
 
             // Update the file again to make sure the config is updated
             _fileSystem.WriteFile("reload.json", @"{""JsonKey1"": ""JsonValue2""}");
 
-            i = 0;
-            while (i < 10 && config["JsonKey1"] == null)
-            {
-                await Task.Delay(1100); // wait for notification
-                i++;
-            }
+            await WaitForChange(
+                () => config["JsonKey1"] == "JsonValue2",
+                "Notification failed for updating after error.");
 
             Assert.Equal("JsonValue2", config["JsonKey1"]);
         }
 
-        [Fact]
+        [ConditionalFact]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         public async Task TouchingFileWillReload()
         {
-            // Arrange
             _fileSystem.WriteFile("reload.json", @"{""JsonKey1"": ""JsonValue1""}");
             _fileSystem.WriteFile("reload.ini", @"IniKey1 = IniValue1");
             _fileSystem.WriteFile("reload.xml", @"<settings XmlKey1=""XmlValue1""/>");
@@ -587,13 +560,16 @@ IniKey1=IniValue2");
 
             var token = config.GetReloadToken();
 
-            // Act & Assert
             // Update files
             _fileSystem.WriteFile("reload.json", @"{""JsonKey1"": ""JsonValue2""}");
             _fileSystem.WriteFile("reload.ini", @"IniKey1 = IniValue2");
             _fileSystem.WriteFile("reload.xml", @"<settings XmlKey1=""XmlValue2""/>");
 
-            await Task.Delay(2000);
+            await WaitForChange(
+                () => config["JsonKey1"] == "JsonValue2"
+                    && config["IniKey1"] == "IniValue2"
+                    && config["XmlKey1"] == "XmlValue2",
+                "Reload failed after touching files.");
 
             Assert.Equal("JsonValue2", config["JsonKey1"]);
             Assert.Equal("IniValue2", config["IniKey1"]);
@@ -601,14 +577,15 @@ IniKey1=IniValue2");
             Assert.True(token.HasChanged);
         }
 
-        [Fact]
+        [ConditionalFact]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         public async Task CreatingOptionalFileInNonExistentDirectoryWillReload()
         {
             var directory = Path.GetRandomFileName();
             var jsonRootRelativeFile = Path.Combine(directory, Path.GetRandomFileName());
             var jsonAbsoluteFile = Path.Combine(_fileSystem.RootPath, jsonRootRelativeFile);
 
-            // Arrange
             var config = new ConfigurationBuilder()
                 .AddJsonFile(jsonAbsoluteFile, optional: true, reloadOnChange: true)
                 .Build();
@@ -620,85 +597,114 @@ IniKey1=IniValue2");
 
             _fileSystem.CreateFolder(directory);
 
-            await Task.Delay(500);
+            await Task.Delay(2000);
 
             _fileSystem.WriteFile(jsonRootRelativeFile, @"{""JsonKey1"": ""JsonValue1""}");
 
             await Task.Delay(2500);
 
+            await WaitForChange(
+                () => config["JsonKey1"] == "JsonValue1",
+                "Notification failed for file when it did not previously exist.",
+                multiplier: 4);
+
             Assert.Equal("JsonValue1", config["JsonKey1"]);
             Assert.True(createToken.HasChanged);
         }
 
-        [Theory]
+        [ConditionalTheory]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         [InlineData(false)]
         [InlineData(true)]
         public async Task DeletingFilesThatRedefineKeysWithReload(bool optional)
         {
-            // Arrange
             _fileSystem.WriteFile(_jsonFile, @"{""Key"": ""JsonValue1""}");
             _fileSystem.WriteFile(_iniFile, @"Key = IniValue1");
             _fileSystem.WriteFile(_xmlFile, @"<settings Key=""XmlValue1""/>");
 
-            // Act & Assert
             var config = CreateBuilder()
                 .AddXmlFile(_xmlFile, optional, reloadOnChange: true)
                 .AddJsonFile(_jsonFile, optional, reloadOnChange: true)
                 .AddIniFile(_iniFile, optional, reloadOnChange: true)
                 .Build();
+
             Assert.Equal("IniValue1", config["Key"]);
 
             // Delete files and ensure order is preserved
             var token = config.GetReloadToken();
             _fileSystem.DeleteFile(_iniFile);
-            await Task.Delay(2000);
+
+            await WaitForChange(
+                () => config["Key"] == "JsonValue1",
+                "Notification failed for deleting ini file.");
+
             Assert.Equal("JsonValue1", config["Key"]);
             Assert.True(token.HasChanged);
 
             token = config.GetReloadToken();
             _fileSystem.DeleteFile(_jsonFile);
-            await Task.Delay(2000);
+
+            await WaitForChange(
+                () => config["Key"] == "XmlValue1",
+                "Notification failed for deleting JSON file.");
+
             Assert.Equal("XmlValue1", config["Key"]);
             Assert.True(token.HasChanged);
 
             token = config.GetReloadToken();
             _fileSystem.DeleteFile(_xmlFile);
-            await Task.Delay(2000);
+
+            await WaitForChange(
+                () => config["Key"] == null,
+                "Notification failed for deleting XML file.");
+
             Assert.Null(config["Key"]);
             Assert.True(token.HasChanged);
 
             token = config.GetReloadToken();
             _fileSystem.WriteFile(_jsonFile, @"{""Key"": ""JsonValue1""}");
-            await Task.Delay(2000);
+
+            await WaitForChange(
+                () => config["Key"] == "JsonValue1",
+                "Notification failed for re-creating JSON file.");
+
             Assert.Equal("JsonValue1", config["Key"]);
             Assert.True(token.HasChanged);
 
             // Adding a file earlier in the chain has no effect
             token = config.GetReloadToken();
             _fileSystem.WriteFile(_xmlFile, @"<settings Key=""XmlValue1""/>");
-            await Task.Delay(2000);
+
+            await WaitForChange(
+                () => token.HasChanged,
+                "Notification failed for re-creating XML file.");
+
             Assert.Equal("JsonValue1", config["Key"]);
             Assert.True(token.HasChanged);
 
             token = config.GetReloadToken();
             _fileSystem.WriteFile(_iniFile, @"Key = IniValue1");
-            await Task.Delay(2000);
+
+            await WaitForChange(
+                () => config["Key"] == "IniValue1",
+                "Notification failed for re-creating ini file.");
+
             Assert.Equal("IniValue1", config["Key"]);
             Assert.True(token.HasChanged);
         }
-
-
-        [Theory]
+        
+        [ConditionalTheory]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         [InlineData(false)]
         [InlineData(true)]
         public async Task DeletingFileWillReload(bool optional)
         {
-            // Arrange
             _fileSystem.WriteFile(_jsonFile, @"{""JsonKey1"": ""JsonValue1""}");
             _fileSystem.WriteFile(_iniFile, @"IniKey1 = IniValue1");
             _fileSystem.WriteFile(_xmlFile, @"<settings XmlKey1=""XmlValue1""/>");
 
-            // Act & Assert
             var config = CreateBuilder()
                 .AddXmlFile(_xmlFile, optional, reloadOnChange: true)
                 .AddJsonFile(_jsonFile, optional, reloadOnChange: true)
@@ -716,7 +722,11 @@ IniKey1=IniValue2");
             _fileSystem.DeleteFile(_iniFile);
             _fileSystem.DeleteFile(_xmlFile);
 
-            await Task.Delay(3300);
+            await WaitForChange(
+                () => config["JsonKey1"] == null
+                    && config["IniKey1"] == null
+                    && config["XmlKey1"] == null,
+                "Reload failed after deleting files.");
 
             Assert.Null(config["JsonKey1"]);
             Assert.Null(config["IniKey1"]);
@@ -724,10 +734,11 @@ IniKey1=IniValue2");
             Assert.True(token.HasChanged);
         }
 
-        [Fact]
+        [ConditionalFact]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         public async Task CreatingWritingDeletingCreatingFileWillReload()
         {
-            // Arrange
             var config = CreateBuilder()
                 .AddIniFile(_iniFile, optional: true, reloadOnChange: true)
                 .AddJsonFile(_jsonFile, optional: true, reloadOnChange: true)
@@ -744,7 +755,11 @@ IniKey1=IniValue2");
             _fileSystem.WriteFile(_iniFile, @"IniKey1 = IniValue1");
             _fileSystem.WriteFile(_xmlFile, @"<settings XmlKey1=""XmlValue1""/>");
 
-            await Task.Delay(2000);
+            await WaitForChange(
+                () => config["JsonKey1"] == "JsonValue1"
+                    && config["IniKey1"] == "IniValue1"
+                    && config["XmlKey1"] == "XmlValue1",
+                "Reload failed after files created.");
 
             Assert.Equal("JsonValue1", config["JsonKey1"]);
             Assert.Equal("IniValue1", config["IniKey1"]);
@@ -757,7 +772,11 @@ IniKey1=IniValue2");
             _fileSystem.WriteFile(_iniFile, @"IniKey1 = IniValue2");
             _fileSystem.WriteFile(_xmlFile, @"<settings XmlKey1=""XmlValue2""/>");
 
-            await Task.Delay(2000);
+            await WaitForChange(
+                () => config["JsonKey1"] == "JsonValue2"
+                    && config["IniKey1"] == "IniValue2"
+                    && config["XmlKey1"] == "XmlValue2",
+                "Reload failed after files changed after creation.");
 
             Assert.Equal("JsonValue2", config["JsonKey1"]);
             Assert.Equal("IniValue2", config["IniKey1"]);
@@ -766,13 +785,16 @@ IniKey1=IniValue2");
 
             var deleteToken = config.GetReloadToken();
 
-            // Act & Assert
             // Delete files
             _fileSystem.DeleteFile(_jsonFile);
             _fileSystem.DeleteFile(_iniFile);
             _fileSystem.DeleteFile(_xmlFile);
 
-            await Task.Delay(2000);
+            await WaitForChange(
+                () => config["JsonKey1"] == null
+                    && config["IniKey1"] == null
+                    && config["XmlKey1"] == null,
+                "Reload failed after deleted after creation.");
 
             Assert.Null(config["JsonKey1"]);
             Assert.Null(config["IniKey1"]);
@@ -785,7 +807,11 @@ IniKey1=IniValue2");
             _fileSystem.WriteFile(_iniFile, @"IniKey1 = IniValue1");
             _fileSystem.WriteFile(_xmlFile, @"<settings XmlKey1=""XmlValue1""/>");
 
-            await Task.Delay(2000);
+            await WaitForChange(
+                () => config["JsonKey1"] == "JsonValue1"
+                    && config["IniKey1"] == "IniValue1"
+                    && config["XmlKey1"] == "XmlValue1",
+                "Reload failed after create-delete-create.");
 
             Assert.Equal("JsonValue1", config["JsonKey1"]);
             Assert.Equal("IniValue1", config["IniKey1"]);
@@ -796,7 +822,6 @@ IniKey1=IniValue2");
         [Fact]
         public void LoadIncorrectJsonFile_ThrowFormatException()
         {
-            // Arrange
             var json = @"{
                 'name': 'test',
                 'address': {
@@ -806,7 +831,6 @@ IniKey1=IniValue2");
             }";
             _fileSystem.WriteFile(_jsonFile, json);
 
-            // Act & Assert
             var exception = Assert.Throws<FormatException>(() => CreateBuilder().AddJsonFile(_jsonFile).Build());
             Assert.NotNull(exception.Message);
         }
@@ -814,21 +838,21 @@ IniKey1=IniValue2");
         [Fact]
         public void SetBasePathCalledMultipleTimesForEachSourceLastOneWins()
         {
-            // Arrange
             var builder = new ConfigurationBuilder();
-            var jsonConfigFilePath = "test.json";
-            File.WriteAllText(Path.Combine(Directory.GetCurrentDirectory(), jsonConfigFilePath), _jsonConfigFileContent);
-            var xmlConfigFilePath = "test.xml";
-            File.WriteAllText(Path.Combine(Directory.GetCurrentDirectory(), xmlConfigFilePath), _xmlConfigFileContent);
 
-            // Act
+            var jsonConfigFilePath = "test.json";
+            _fileSystem.CreateFolder("NewBase");
+            _fileSystem.WriteFile(Path.Combine("NewBase", jsonConfigFilePath), _jsonConfigFileContent);
+
+            var xmlConfigFilePath = "test.xml";
+            _fileSystem.WriteFile(Path.Combine("NewBase", xmlConfigFilePath), _xmlConfigFileContent);
+
             builder.AddXmlFile("test.xml")
-                .SetBasePath(Directory.GetCurrentDirectory())
+                .SetBasePath(Path.Combine(_fileSystem.RootPath, "NewBase"))
                 .AddJsonFile("test.json");
 
             var config = builder.Build();
 
-            // Assert
             Assert.Equal("JsonValue1", config["JsonKey1"]);
             Assert.Equal("JsonValue2", config["Json.Key2:JsonKey3"]);
             Assert.Equal("JsonValue3", config["Json.Key2:Json.Key4"]);
@@ -840,26 +864,24 @@ IniKey1=IniValue2");
             Assert.Equal("XmlValue3", config["XmlKey2:XmlKey4"]);
             Assert.Equal("XmlValue4", config["XmlKey2:XmlKey5:XmlKey6"]);
 
-            File.Delete(jsonConfigFilePath);
+            _fileSystem.DeleteFile(Path.Combine("NewBase", jsonConfigFilePath));
+            _fileSystem.DeleteFile(Path.Combine("NewBase", xmlConfigFilePath));
         }
 
         [Fact]
         public void GetDefaultBasePathForSources()
         {
-            // Arrange
             var builder = new ConfigurationBuilder();
 
             var jsonConfigFilePath = Path.Combine(_basePath, "test.json");
             var xmlConfigFilePath = Path.Combine(_basePath, "xmltest.xml");
-            File.WriteAllText(jsonConfigFilePath, _jsonConfigFileContent);
-            File.WriteAllText(xmlConfigFilePath, _xmlConfigFileContent);
+            _fileSystem.WriteFile(jsonConfigFilePath, _jsonConfigFileContent, absolute: true);
+            _fileSystem.WriteFile(xmlConfigFilePath, _xmlConfigFileContent, absolute: true);
 
-            // Act
             builder.AddJsonFile("test.json").AddXmlFile("xmltest.xml");
 
             var config = builder.Build();
 
-            // Assert
             Assert.Equal("JsonValue1", config["JsonKey1"]);
             Assert.Equal("JsonValue2", config["Json.Key2:JsonKey3"]);
             Assert.Equal("JsonValue3", config["Json.Key2:Json.Key4"]);
@@ -871,14 +893,13 @@ IniKey1=IniValue2");
             Assert.Equal("XmlValue3", config["XmlKey2:XmlKey4"]);
             Assert.Equal("XmlValue4", config["XmlKey2:XmlKey5:XmlKey6"]);
 
-            File.Delete(jsonConfigFilePath);
-            File.Delete(xmlConfigFilePath);
+            _fileSystem.DeleteFile(jsonConfigFilePath, absolute: true);
+            _fileSystem.DeleteFile(xmlConfigFilePath, absolute: true);
         }
 
         [Fact]
         public void CanEnumerateProviders()
         {
-            // Arrange
             var config = CreateBuilder()
                 .AddIniFile(_iniFile, optional: true, reloadOnChange: true)
                 .AddJsonFile(_jsonFile, optional: true, reloadOnChange: true)
@@ -892,10 +913,11 @@ IniKey1=IniValue2");
             Assert.NotNull(providers.Single(p => p is IniConfigurationProvider));
         }
 
-        [Fact]
+        [ConditionalFact]
+        [OSSkipCondition(OperatingSystems.Linux, SkipReason = "File watching is flaky on non windows.")]
+        [OSSkipCondition(OperatingSystems.MacOSX, SkipReason = "File watching is flaky on non windows.")]
         public async Task TouchingFileWillReloadForUserSecrets()
         {
-            // Arrange
             string userSecretsId = "Test";
             var userSecretsPath = PathHelper.GetSecretsPathFromSecretsId(userSecretsId);
             var userSecretsFolder = Path.GetDirectoryName(userSecretsPath);
@@ -911,11 +933,12 @@ IniKey1=IniValue2");
 
             var token = config.GetReloadToken();
 
-            // Act & Assert
             // Update file
             _fileSystem.WriteFile(userSecretsPath, @"{""UserSecretKey1"": ""UserSecretValue2""}");
 
-            await Task.Delay(2000);
+            await WaitForChange(
+                () => config["UserSecretKey1"] == "UserSecretValue2",
+                "Reload failed after create-delete-create.");
 
             Assert.Equal("UserSecretValue2", config["UserSecretKey1"]);
             Assert.True(token.HasChanged);
@@ -925,6 +948,23 @@ IniKey1=IniValue2");
         {
             _fileProvider.Dispose();
             _fileSystem.Dispose();
+        }
+
+        private async Task WaitForChange(
+            Func<bool> test,
+            string failureMessage,
+            int multiplier = 1)
+        {
+            var i = 0;
+            while (!test())
+            {
+                if (++i >= _retries * multiplier)
+                {
+                    throw new Exception(failureMessage);
+                }
+
+                await Task.Delay(_msDelay);
+            }
         }
     }
 }
